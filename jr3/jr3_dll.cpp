@@ -9,6 +9,18 @@
 
 #define DLLEXPORT extern "C" __declspec(dllexport)
 
+typedef struct clocked_force_array
+{
+    unsigned short count;
+    struct force_array fa;
+} clocked_force_array;
+
+
+DLLEXPORT ULONG GetDllVersion()
+{
+	ULONG version = 1;
+	return version;
+}
 
 DLLEXPORT ULONG GetSupportedChannels(HANDLE hJr3PciDevice)
 {
@@ -101,4 +113,23 @@ DLLEXPORT HANDLE GetHandle(int iDeviceIndex)
 	printf("Handle to device '%s' opened successfully.\r\n", szDeviceName);
 	
 	return hJr3PciDevice;
+}
+
+DLLEXPORT force_array GetForceArray(HANDLE hJr3PciDevice, UCHAR ucChannel, UCHAR ucFilter)
+{
+    force_array fa;
+    short * pfa = (short *)&fa;
+    for (ULONG ulOffset = 0; ulOffset < 8; ulOffset++)
+	{
+		pfa[ulOffset] = ReadWord(hJr3PciDevice, ucChannel, 0x90 + ucFilter * 8 + ulOffset);
+	}
+    return fa;
+}
+
+DLLEXPORT clocked_force_array GetClockedForceArray(HANDLE hJr3PciDevice, UCHAR ucChannel, UCHAR ucFilter)
+{
+    clocked_force_array cfa;
+    cfa.count = ReadWord(hJr3PciDevice, ucChannel, COUNT1 - 1 + ucFilter);
+    cfa.fa = GetForceArray(hJr3PciDevice, ucChannel, ucFilter);
+    return cfa;
 }

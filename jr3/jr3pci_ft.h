@@ -524,7 +524,7 @@ void write_jr3(unsigned short, unsigned short, short, short);
 
 // Command JR3
 // Input parameters: address, value_to_write, processor number
-// Return Value: 0 if command was sucessful
+// Return Value: 0 if command was successful
 short command_jr3(unsigned short, unsigned short, short, short);
 
 // Reads System Warnings
