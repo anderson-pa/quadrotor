@@ -1,15 +1,14 @@
-#  g++ -Wall -Wextra -O -ansi -pedantic -shared .\jr3_dll.cpp -o jr3.dll
 
 from ctypes import *
 
-lib = cdll.LoadLibrary('./jr3/jr3.dll')
-fh = lib.GetHandle(1)
+jr3 = cdll.LoadLibrary('./jr3/jr3.dll')
+fh = jr3.GetHandle(1)
 
 def read_words(offset, length=1):
-	return [lib.ReadWord(fh, 0, offset + i) for i in range(length)]
+	return [jr3.ReadWord(fh, 0, offset + i) for i in range(length)]
 	
 def read_word_list(offsets):
-	return [lib.ReadWord(fh, 0, offset) for offset in offsets]
+	return [jr3.ReadWord(fh, 0, offset) for offset in offsets]
 	
 def get_copyright():
 	x = read_words(0x40, 18)
@@ -68,9 +67,9 @@ def get_counts():
 #  min			0xd0, 8
 #  max			0xd8, 8
 
-lib.ReadWord(fh, 0, 0xf8)
+jr3.ReadWord(fh, 0, 0xf8)
  
-format(lib.ReadWord(fh, 0, 0x98), '016b')
-lib.ReadWord(fh, 0, 0x40).to_bytes(2, 'big')
+format(jr3.ReadWord(fh, 0, 0x98), '016b')
+jr3.ReadWord(fh, 0, 0x40).to_bytes(2, 'big')
 
 [c_short(y).value/z for y, z in zip(read_words(0xc0, 8), [50, 50, 100, 40, 40, 40]) ]
