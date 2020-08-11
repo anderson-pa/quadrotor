@@ -121,7 +121,7 @@ DLLEXPORT WORD ReadWord(HANDLE hJr3PciDevice, UCHAR ucChannel, ULONG ulOffset)
 	return ReadWordResponseParams.usData;
 }
 
-DLLEXPORT void ReadWords(HANDLE hJr3PciDevice, UCHAR ucChannel, ULONG ulOffset, ULONG ulLength, short words[])
+DLLEXPORT void ReadWords(HANDLE hJr3PciDevice, UCHAR ucChannel, ULONG ulOffset, ULONG ulLength, unsigned short words[])
 {
     for (ULONG i = 0; i < ulLength; i++)
 	{
@@ -132,7 +132,7 @@ DLLEXPORT void ReadWords(HANDLE hJr3PciDevice, UCHAR ucChannel, ULONG ulOffset, 
 DLLEXPORT force_array GetForceArray(HANDLE hJr3PciDevice, UCHAR ucChannel, UCHAR ucFilter)
 {
     force_array fa;
-    short * pfa = (short *)&fa;
+    unsigned short * pfa = (unsigned short *)&fa;
     ReadWords(hJr3PciDevice, ucChannel, 0x90 + 8*ucFilter, 8, pfa);
     return fa;
 }
@@ -141,7 +141,7 @@ DLLEXPORT clocked_force_array GetClockedForceArray(HANDLE hJr3PciDevice, UCHAR u
 {
     clocked_force_array cfa;
     cfa.count = ReadWord(hJr3PciDevice, ucChannel, COUNT1 - 1 + ucFilter);
-    short * pcfa = (short *)&cfa.fx;
+    unsigned short * pcfa = (unsigned short *)&cfa.fx;
     ReadWords(hJr3PciDevice, ucChannel, 0x90 + 8*ucFilter, 8, pcfa);
     return cfa;
 }
