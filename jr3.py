@@ -78,6 +78,14 @@ class Jr3:
         """
         return [self._read_word(offset, restype) for offset in offsets]
 
+    def _write_word(self, offset, value):
+        """Write a word to the JR3 memory space.
+
+        :param offset: memory location to write to
+        :param value: data to write
+        """
+        jr3.WriteWord(self._handle, self._channel, offset, value)
+
     def self_test(self):
         """Perform a simple self test to confirm some basic operation.
 
@@ -88,6 +96,16 @@ class Jr3:
             raise SystemError(f'JR3 failed self test. Copyright string mismatch: {self.copyright}')
 
         # test write
+        offset = self._read_word(0x88, c_short)
+        new_offset = 0
+        if offset == new_offset:
+           new_offset = -5
+        self._write_word(0x88, new_offset)
+        read_new_offset = self._read_word(0x88, c_short)
+        if not new_offset == read_new_offset:
+            raise SystemError(f'JR3 failed self test. Writing {new_offset} '
+                              f'to 0x88 and read back {read_new_offset}')
+        self._write_word(0x88, offset)
 
     @property
     def copyright(self):
