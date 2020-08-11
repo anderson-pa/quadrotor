@@ -1,10 +1,14 @@
 from ctypes import *
+from collections import namedtuple
 
-jr3 = cdll.LoadLibrary('./jr3/jr3.dll')
-fh = jr3.GetHandle(1)
+# define return structures for DLL function calls
+six_names = 'fx fy fz mx my mz'
+six_array = namedtuple('SixArray', six_names)
+field_six_array = [(name, c_short) for name in six_names.split()]
 
-field_six_array = [(name, c_short) for name in ['fx', 'fy', 'fz', 'mx', 'my', 'mz']]
-field_force_array = field_six_array + [(name, c_short) for name in ['v1', 'v2']]
+force_names = 'fx fy fz mx my mz v1 v2'
+force_array = namedtuple('ForceArray', force_names)
+field_force_array = [(name, c_short) for name in force_names.split()]
 
 
 class ForceArray(Structure):
@@ -15,58 +19,80 @@ class ClockedForceArray(Structure):
     _fields_ = [('clk', c_ushort)] + field_force_array
 
 
+# load the DLL and apply return types as appropriate
+jr3 = cdll.LoadLibrary('./jr3/jr3.dll')
 jr3.GetForceArray.restype = ForceArray
 jr3.GetClockedForceArray.restype = ClockedForceArray
 
 
-def read_words(offset, length=1):
-    return [jr3.ReadWord(fh, 0, offset + i) for i in range(length)]
+class Jr3:
+    def __init__(self, device_index=1, channel=0):
+        self._handle = jr3.GetHandle(device_index)
+        self._channel = channel
 
+    def _read_word(self, offset):
+        return jr3.ReadWord(self._handle, self._channel, offset)
 
-def read_word_list(offsets):
-    return [jr3.ReadWord(fh, 0, offset) for offset in offsets]
+    def _read_words(self, offset, length) -> list:
+        words_def = c_short * length
+        words = words_def()
+        jr3.ReadWords(self._handle, self._channel, offset, length, words)
+        return list(words)
 
+    def _read_word_list(self, offsets):
+        return [self._read_word(offset) for offset in offsets]
 
-def get_copyright():
-    x = read_words(0x40, 18)
-    return ''.join([y.to_bytes(2, 'big').decode('utf-8') for y in x])
+    @property
+    def copyright(self):
+        copyright = self._read_words(0x40, 18)
+        return ''.join([c.to_bytes(2, 'big').decode('utf-8') for c in copyright])
 
+    @property
+    def serial_num(self):
+        return self._read_word(0xf8)
 
-def get_offsets():
-    return [c_short(y).value for y in read_words(0x88, 6)]
+    @property
+    def offsets(self):
+        return six_array(*self._read_words(0x88, 6))
 
+    @property
+    def fs_min(self):
+        return six_array(*self._read_words(0x70, 6))
 
-def get_fs_minmax():
-    fs_mins = [c_short(y).value for y in read_words(0x70, 6)]
-    fs_maxs = [c_short(y).value for y in read_words(0x78, 6)]
-    return list(zip(fs_mins, fs_maxs))
+    @property
+    def fs_max(self):
+        return six_array(*self._read_words(0x78, 6))
 
+    @property
+    def fs(self):
+        return force_array(*self._read_words(0x80, 8))
 
-def get_fs():
-    return [c_short(y).value for y in read_words(0x80, 8)]
+    def read_forces(self, filter=0, scaled=True):
+        if filter < 0 or filter > 6:
+            raise ValueError('filter must be 0-6 inclusive.')
+        fa = jr3.GetForceArray(self._handle, self._channel, filter)
+        fa = [getattr(fa, f[0]) for f in fa._fields_]
 
+        if scaled:
+            fa = [f / 2**14 * fs for f, fs, in zip(fa, self.fs)]
 
-def get_f(filter=0):
-    if filter < 0 or filter > 6:
-        raise ValueError('filter must be 0-6 inclusive.')
-    raw = [c_short(y).value / 2 ** 14 * fs for y, fs in zip(read_words(0x90 + 8 * filter, 8), get_fs())]
+        return force_array(*fa)
 
-    return raw
+    def read_clocked_forces(self, filter=1, scaled=True):
+        if filter < 1 or filter > 6:
+            raise ValueError('filter must be 1-6 inclusive.')
+        cfa = jr3.GetClockedForceArray(self._handle, self._channel, filter)
+        cfa = [getattr(cfa, f[0]) for f in cfa._fields_]
+        clk, *cfa = cfa
 
+        if scaled:
+            cfa = [f / 2**14 * fs for f, fs, in zip(cfa, self.fs)]
 
-# return [raw - offset for raw, offset in zip(raw, get_offsets())]
+        return clk, force_array(*cfa)
 
-def get_raw(offset=False, scaled=False):
-    raw = [c_short(x).value for x in read_word_list(range(5, 29, 4))]
-    if offset:
-        raw = [r + of for r, of in zip(raw, get_offsets())]
-    if scaled:
-        raw = [r / 2 ** 14 * s for r, s in zip(raw, get_fs())]
-    return raw
-
-
-def get_counts():
-    return read_words(0xe8, 6)
+    @property
+    def counters(self):
+        return [c_ushort(cnt).value for cnt in self._read_words(0xe8, 6)]
 
 #  shunts 		0x60, 6
 #  def fs 		0x68, 6
@@ -90,10 +116,3 @@ def get_counts():
 #  rate			0xc8, 8
 #  min			0xd0, 8
 #  max			0xd8, 8
-
-# jr3.ReadWord(fh, 0, 0xf8)
-
-# format(jr3.ReadWord(fh, 0, 0x98), '016b')
-# jr3.ReadWord(fh, 0, 0x40).to_bytes(2, 'big')
-
-# [c_short(y).value / z for y, z in zip(read_words(0xc0, 8), [50, 50, 100, 40, 40, 40])]

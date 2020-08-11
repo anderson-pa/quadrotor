@@ -12,13 +12,20 @@
 typedef struct clocked_force_array
 {
     unsigned short count;
-    struct force_array fa;
+    short fx;
+    short fy;
+    short fz;
+    short mx;
+    short my;
+    short mz;
+    short v1;
+    short v2;
 } clocked_force_array;
 
 
 DLLEXPORT ULONG GetDllVersion()
 {
-	ULONG version = 1;
+	ULONG version = 2;
 	return version;
 }
 
@@ -40,6 +47,29 @@ DLLEXPORT ULONG GetSupportedChannels(HANDLE hJr3PciDevice)
 	_ASSERTE(bSuccess && (dwBytesReturned == sizeof(JR3PCI_SUPPORTED_CHANNELS_RESPONSE_PARAMS)));
 
 	return SupportedChannelsResponseParams.ulSupportedChannels;
+}
+
+DLLEXPORT HANDLE GetHandle(int iDeviceIndex)
+{
+	char szDeviceName[30];
+	sprintf(szDeviceName, "\\\\.\\JR3PCI%d", iDeviceIndex);
+	HANDLE hJr3PciDevice = CreateFile(
+		szDeviceName,					// file name
+		GENERIC_READ | GENERIC_WRITE,   // access mode
+		0,								// share mode
+		NULL,							// SD
+		OPEN_EXISTING,					// how to create
+		0,								// file attributes
+		NULL);							// handle to template file
+
+	if (hJr3PciDevice == INVALID_HANDLE_VALUE)
+	{
+		printf("Failed to open a handle to device '%s'.\r\n", szDeviceName);
+		//continue;
+	}
+	printf("Handle to device '%s' opened successfully.\r\n", szDeviceName);
+
+	return hJr3PciDevice;
 }
 
 DLLEXPORT void WriteWord(HANDLE hJr3PciDevice, UCHAR ucChannel, ULONG ulOffset, USHORT usData)
@@ -91,38 +121,19 @@ DLLEXPORT WORD ReadWord(HANDLE hJr3PciDevice, UCHAR ucChannel, ULONG ulOffset)
 	return ReadWordResponseParams.usData;
 }
 
-
-DLLEXPORT HANDLE GetHandle(int iDeviceIndex)
-{	
-	char szDeviceName[30];
-	sprintf(szDeviceName, "\\\\.\\JR3PCI%d", iDeviceIndex);
-	HANDLE hJr3PciDevice = CreateFile(
-		szDeviceName,					// file name
-		GENERIC_READ | GENERIC_WRITE,   // access mode
-		0,								// share mode
-		NULL,							// SD
-		OPEN_EXISTING,					// how to create
-		0,								// file attributes
-		NULL);							// handle to template file
-
-	if (hJr3PciDevice == INVALID_HANDLE_VALUE)
+DLLEXPORT void ReadWords(HANDLE hJr3PciDevice, UCHAR ucChannel, ULONG ulOffset, ULONG ulLength, short words[])
+{
+    for (ULONG i = 0; i < ulLength; i++)
 	{
-		printf("Failed to open a handle to device '%s'.\r\n", szDeviceName);
-		//continue;
+		words[i] = ReadWord(hJr3PciDevice, ucChannel, ulOffset + i);
 	}
-	printf("Handle to device '%s' opened successfully.\r\n", szDeviceName);
-	
-	return hJr3PciDevice;
 }
 
 DLLEXPORT force_array GetForceArray(HANDLE hJr3PciDevice, UCHAR ucChannel, UCHAR ucFilter)
 {
     force_array fa;
     short * pfa = (short *)&fa;
-    for (ULONG ulOffset = 0; ulOffset < 8; ulOffset++)
-	{
-		pfa[ulOffset] = ReadWord(hJr3PciDevice, ucChannel, 0x90 + ucFilter * 8 + ulOffset);
-	}
+    ReadWords(hJr3PciDevice, ucChannel, 0x90 + 8*ucFilter, 8, pfa);
     return fa;
 }
 
@@ -130,6 +141,7 @@ DLLEXPORT clocked_force_array GetClockedForceArray(HANDLE hJr3PciDevice, UCHAR u
 {
     clocked_force_array cfa;
     cfa.count = ReadWord(hJr3PciDevice, ucChannel, COUNT1 - 1 + ucFilter);
-    cfa.fa = GetForceArray(hJr3PciDevice, ucChannel, ucFilter);
+    short * pcfa = (short *)&cfa.fx;
+    ReadWords(hJr3PciDevice, ucChannel, 0x90 + 8*ucFilter, 8, pcfa);
     return cfa;
 }
