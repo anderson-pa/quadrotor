@@ -35,9 +35,8 @@ class Jr3:
         self._handle = jr3.GetHandle(device_index)
         self._channel = channel
 
-        self.reset_peaks_on_read = True
-
         self.self_test()
+        self.set_peak_address(0)
 
     def _read_word(self, offset, restype=None):
         """Read a word from the JR3 memory space.
@@ -117,7 +116,7 @@ class Jr3:
 
         return self._read_word(0xe7)
 
-    def _scale_counts(self, force_array):
+    def _scale_counts(self, fa):
         """Scale raw count values by the full scale.
 
         According to the manual, the maximum count is 2**14 (16384), so divide
@@ -127,7 +126,8 @@ class Jr3:
         :param force_array: list of counts (fx, fy, fz, mx, my, mz, v1, v2)
         :return: list(scaled counts)
         """
-        return [f / 2 ** 14 * fs for f, fs, in zip(force_array, self.fs)]
+        return force_array(*[f / 2 ** 14 * fs
+                             for f, fs, in zip(fa, self.fs)])
 
     def self_test(self):
         """Perform a simple self test to confirm some basic operation.
@@ -175,16 +175,13 @@ class Jr3:
         """
         return six_array(*self._read_words(0x60, 6, c_short))
 
-    @property
-    def fs_min(self):
+    def get_fs_min(self):
         return six_array(*self._read_words(0x70, 6))
 
-    @property
-    def fs_max(self):
+    def get_fs_max(self):
         return six_array(*self._read_words(0x78, 6))
 
-    @property
-    def fs_defaults(self):
+    def get_fs_defaults(self):
         return six_array(*self._read_words(0x68, 6))
 
     @property
@@ -248,9 +245,54 @@ class Jr3:
         v2 = vector_axes(*bits[3:6], not bits[7])
         return v1, v2
 
-    @property
-    def peak_address(self):
+    def set_peak_address(self, filter=None, *, address=None):
+        """Set which filter or address to monitor for peaks.
+
+        One of the parameters must be supplied. Use 0-6 to select the
+        corresponding filter to monitor, or 7 for rates. Optionally provide a
+        specific address usign the address parameter. If both filter and
+        address are provided, address will be ignored.
+
+        The JR3 monitors a block of 8 values starting at the given address.
+
+        :param filter: which filter to monitor (use 7 for 'rates')
+        :param address: (optional) alternative address to monitor
+        """
+        if filter is not None:
+            address = 0x90 + 8 * (filter % 8)
+        if address is not None:
+            self._write_word(0x7f, address)
+
+    def get_peak_address(self):
+        """Get the start address of block the JR3 is monitoring for peaks.
+
+        The JR3 monitors a block of 8 values starting at the given address.
+
+        :return: int address
+        """
         return self._read_word(0x7f)
+
+    def get_peaks(self, scaled=True, reset=True):
+        """Read the peak values from the JR3.
+
+        Get the minima and maxima for the values being monitored since the
+        last reset. If reset is True, these peak values will be cleared for
+        the next read.
+
+        :param scaled: if True, scale from counts to calibrated units
+        :param reset: if True, clear the peak values after reading
+        :return: ForceArray(minima), ForceArray(maxima)
+        """
+        command = 0x0b00 if reset else 0x0c00
+        self._write_command(command)
+
+        minima = force_array(*self._read_words(0xd0, 8, c_short))
+        maxima = force_array(*self._read_words(0xd8, 8, c_short))
+
+        if scaled:
+            minima = self._scale_counts(minima)
+            maxima = self._scale_counts(maxima)
+        return minima, maxima
 
     def get_max_forces(self):
         return
