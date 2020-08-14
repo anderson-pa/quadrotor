@@ -10,6 +10,11 @@ force_names = 'fx fy fz mx my mz v1 v2'
 force_array = namedtuple('ForceArray', force_names)
 field_force_array = [(name, c_short) for name in force_names.split()]
 
+# VectorAxes contains four booleans:
+#   x, y, z indicate if the coresponding axes are used to compute the vector
+#   is_force indicates the vector is a force (if True) or momentum (if False)
+vector_axes = namedtuple('VectorAxes', 'x y z is_force')
+
 
 class ForceArray(Structure):
     _fields_ = field_force_array
@@ -29,6 +34,8 @@ class Jr3:
     def __init__(self, device_index=1, channel=0):
         self._handle = jr3.GetHandle(device_index)
         self._channel = channel
+
+        self.reset_peaks_on_read = True
 
         self.self_test()
 
@@ -86,6 +93,42 @@ class Jr3:
         """
         jr3.WriteWord(self._handle, self._channel, offset, value)
 
+    def _write_command(self, cw0, cw1=None, cw2=None):
+        """Write command words to the JR3.
+
+        Write values to the command addresses of the JR3. Words are written in
+        reverse order (2, 1, 0) since it seems cw0 actually initiates the
+        command.
+
+        The JR3 indicates that the command was successfully completed by
+        writing 0 to cw0 address. This value is returned but not checked for
+        completion.
+
+        :param cw0: value to write to command word 0
+        :param cw1: (optional) value to write to command word 1
+        :param cw2: (optional) value to write to command word 2
+        :return: int value read from the cw0 memmory address
+        """
+        if cw2 is not None:
+            self._write_word(0xe6, cw2)
+        if cw1 is not None:
+            self._write_word(0xe5, cw1)
+        self._write_word(0xe7, cw0)
+
+        return self._read_word(0xe7)
+
+    def _scale_counts(self, force_array):
+        """Scale raw count values by the full scale.
+
+        According to the manual, the maximum count is 2**14 (16384), so divide
+        raw counts by that and multiply by full scale value to get the
+        measurement in engineering units.
+
+        :param force_array: list of counts (fx, fy, fz, mx, my, mz, v1, v2)
+        :return: list(scaled counts)
+        """
+        return [f / 2 ** 14 * fs for f, fs, in zip(force_array, self.fs)]
+
     def self_test(self):
         """Perform a simple self test to confirm some basic operation.
 
@@ -125,15 +168,12 @@ class Jr3:
         return self._read_word(0xf8)
 
     @property
-    def offsets(self):
-        """Get the sensor offsets used to decouple the data.
-
-        This should not normally be needed since the force readings already
-        incorporate this into the result.
+    def shunts(self):
+        """Get the shunt readings.
 
         :return: list(int)
         """
-        return six_array(*self._read_words(0x88, 6, c_short))
+        return six_array(*self._read_words(0x60, 6, c_short))
 
     @property
     def fs_min(self):
@@ -144,8 +184,76 @@ class Jr3:
         return six_array(*self._read_words(0x78, 6))
 
     @property
+    def fs_defaults(self):
+        return six_array(*self._read_words(0x68, 6))
+
+    @property
     def fs(self):
         return force_array(*self._read_words(0x80, 8))
+
+    @property
+    def load_envelope(self):
+        return self._read_word(0x6f)
+
+    @property
+    def active_transform(self):
+        return self._read_word(0x77)
+
+    @property
+    def offsets(self):
+        """Get the sensor offsets used to decouple the data.
+
+        This should not normally be needed since the force readings already
+        incorporate this into the result.
+
+        :return: list(int)
+        """
+        return six_array(*self._read_words(0x88, 6, c_short))
+
+    @offsets.setter
+    def offsets(self, offsets):
+        # convert namedtuples to dicts
+        try:
+            offsets = offsets._asdict()
+        except AttributeError:
+            pass
+
+        for i, field in enumerate(six_names.split()):
+            try:
+                self._write_word(0x88 + i, offsets[field])
+            except KeyError:
+                pass
+
+    @property
+    def active_offset(self):
+        return self._read_word(0x8e)
+
+    @active_offset.setter
+    def active_offset(self, active_offset):
+        command = 0x0600 + active_offset % 16
+        self._write_command(command)
+
+    def reset_offsets(self):
+        """Update the offsets to zero out the readings.
+
+        According to the manual, this command uses filter2 to calculate
+        offset values.
+        """
+        self._write_command(0x0800)
+
+    @property
+    def vector_axes(self):
+        bits = [bool(b) for b in format(self._read_word(0x8f), '08b')[::-1]]
+        v1 = vector_axes(*bits[:3], bits[6])
+        v2 = vector_axes(*bits[3:6], not bits[7])
+        return v1, v2
+
+    @property
+    def peak_address(self):
+        return self._read_word(0x7f)
+
+    def get_max_forces(self):
+        return
 
     def read_forces(self, filter=0, scaled=True):
         """Read the forces from the JR3 sensor.
@@ -160,7 +268,7 @@ class Jr3:
         fa = [getattr(fa, f[0]) for f in fa._fields_]
 
         if scaled:
-            fa = [f / 2 ** 14 * fs for f, fs, in zip(fa, self.fs)]
+            fa = self._scale_counts(fa)
 
         return force_array(*fa)
 
@@ -183,7 +291,7 @@ class Jr3:
         clk, *cfa = cfa
 
         if scaled:
-            cfa = [f / 2 ** 14 * fs for f, fs, in zip(cfa, self.fs)]
+            cfa = self._scale_counts(cfa)
 
         return clk, force_array(*cfa)
 
@@ -194,18 +302,3 @@ class Jr3:
         :return: list(int)
         """
         return [c_ushort(cnt).value for cnt in self._read_words(0xe8, 6)]
-
-#  shunts 		0x60, 6
-#  def fs 		0x68, 6
-#  load env # 	0x6f
-#  min fs		0x70, 6
-#  xForm#		0x77
-#  max fs		0x78, 6
-#  fs			0x80, 8
-##  ofs			0x88, 6
-#  ofs#			0x8e
-#  vect axes	0x8f
-
-#  rate			0xc8, 8
-#  min			0xd0, 8
-#  max			0xd8, 8
